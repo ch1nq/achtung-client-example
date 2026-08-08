@@ -1,16 +1,34 @@
-FROM python:3.12-slim
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-
+FROM lukemathwalker/cargo-chef:latest-rust-1.89.0 AS chef
 WORKDIR /app
 
-# Install dependencies
-COPY uv.lock pyproject.toml /app
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project --no-editable
 
-# Copy the project into the image
-ADD . .
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-editable
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
+COPY src ./src
+COPY protos ./protos
+RUN cargo chef prepare --recipe-path recipe.json
 
-ENTRYPOINT ["/app/.venv/bin/python", "main.py"]
+
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+RUN apt-get update && apt-get install -y protobuf-compiler
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    cargo chef cook --release --recipe-path recipe.json
+COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
+COPY src ./src
+COPY protos ./protos
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    cargo build --release --bin sample-agent
+
+
+FROM debian:bookworm-slim AS runner
+RUN apt-get update && \
+    apt-get install -y ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/sample-agent /usr/local/bin/
+ENV PORT=50052
+ENTRYPOINT ["/usr/local/bin/sample-agent"]

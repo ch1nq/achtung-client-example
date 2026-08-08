@@ -1,0 +1,19 @@
+[package]
+name = "sample-agent"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "sample-agent"
+path = "src/main.rs"
+
+[dependencies]
+tonic = "0.12.3"
+prost = "0.13"
+tokio = { version = "1.48", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rand = "0.9"
+
+[build-dependencies]
+tonic-build = "0.12.3"
