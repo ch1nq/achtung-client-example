@@ -3,19 +3,34 @@
 //! Deliberately dumb: it ignores the game state entirely and picks a random
 //! direction each tick (heavily weighted toward going straight so the game
 //! still lasts more than a couple of ticks). This is a pipeline test agent, not
-//! a competitor — the point is to exercise Initialize/GetAction and let the
+//! a competitor — the point is to exercise Initialize/Play and let the
 //! engine resolve a placement order, not to play well.
 
-use tonic::{transport::Server, Request, Response, Status};
+use tokio_stream::wrappers::ReceiverStream;
+use tonic::{transport::Server, Request, Response, Status, Streaming};
 
 pub mod agentpb {
     tonic::include_proto!("achtung.agent");
 }
 
 use agentpb::agent_server::{Agent, AgentServer};
-use agentpb::{AgentAction, Direction, GameState, InitializeRequest, InitializeResponse};
+use agentpb::{
+    AgentAction, Direction, InitializeRequest, InitializeResponse, PlayRequest, PlayResponse,
+};
 
 struct SampleAgent;
+
+/// Really dumb: random walk. Mostly straight, occasional random turn.
+fn random_action() -> AgentAction {
+    let direction = match rand::random_range(0..10) {
+        0 => Direction::TurnLeft,
+        1 => Direction::TurnRight,
+        _ => Direction::Staight,
+    };
+    AgentAction {
+        direction: direction as i32,
+    }
+}
 
 #[tonic::async_trait]
 impl Agent for SampleAgent {
@@ -28,19 +43,37 @@ impl Agent for SampleAgent {
         Ok(Response::new(InitializeResponse {}))
     }
 
-    async fn get_action(
+    type PlayStream = ReceiverStream<Result<PlayResponse, Status>>;
+
+    async fn play(
         &self,
-        _request: Request<GameState>,
-    ) -> Result<Response<AgentAction>, Status> {
-        // Really dumb: random walk. Mostly straight, occasional random turn.
-        let direction = match rand::random_range(0..10) {
-            0 => Direction::TurnLeft,
-            1 => Direction::TurnRight,
-            _ => Direction::Staight,
-        };
-        Ok(Response::new(AgentAction {
-            direction: direction as i32,
-        }))
+        request: Request<Streaming<PlayRequest>>,
+    ) -> Result<Response<Self::PlayStream>, Status> {
+        let mut inbound = request.into_inner();
+        let (tx, rx) = tokio::sync::mpsc::channel(128);
+        // Test hook: simulate a slow thinker so hosts can verify tick
+        // pacing stays fixed while agents lag.
+        let sleep_ms: u64 = std::env::var("SLEEP_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        tokio::spawn(async move {
+            // Lockstep echo: one reply per request, tick echoed back so the
+            // host can match replies to ticks.
+            while let Ok(Some(req)) = inbound.message().await {
+                if sleep_ms > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
+                }
+                let resp = PlayResponse {
+                    tick: req.tick,
+                    action: Some(random_action()),
+                };
+                if tx.send(Ok(resp)).await.is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(Response::new(ReceiverStream::new(rx)))
     }
 }
 
