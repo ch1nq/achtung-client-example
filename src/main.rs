@@ -3,7 +3,7 @@
 //! Deliberately dumb: it ignores the game state entirely and picks a random
 //! direction each tick (heavily weighted toward going straight so the game
 //! still lasts more than a couple of ticks). This is a pipeline test agent, not
-//! a competitor — the point is to exercise Initialize/GetAction/Play and let the
+//! a competitor — the point is to exercise Initialize/Play and let the
 //! engine resolve a placement order, not to play well.
 
 use tokio_stream::wrappers::ReceiverStream;
@@ -15,8 +15,7 @@ pub mod agentpb {
 
 use agentpb::agent_server::{Agent, AgentServer};
 use agentpb::{
-    AgentAction, Direction, GameState, InitializeRequest, InitializeResponse, PlayRequest,
-    PlayResponse,
+    AgentAction, Direction, InitializeRequest, InitializeResponse, PlayRequest, PlayResponse,
 };
 
 struct SampleAgent;
@@ -42,13 +41,6 @@ impl Agent for SampleAgent {
         let req = request.into_inner();
         tracing::info!(player_id = req.player_id, "initialized");
         Ok(Response::new(InitializeResponse {}))
-    }
-
-    async fn get_action(
-        &self,
-        _request: Request<GameState>,
-    ) -> Result<Response<AgentAction>, Status> {
-        Ok(Response::new(random_action()))
     }
 
     type PlayStream = ReceiverStream<Result<PlayResponse, Status>>;
