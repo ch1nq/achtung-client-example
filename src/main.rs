@@ -51,10 +51,19 @@ impl Agent for SampleAgent {
     ) -> Result<Response<Self::PlayStream>, Status> {
         let mut inbound = request.into_inner();
         let (tx, rx) = tokio::sync::mpsc::channel(128);
+        // Test hook: simulate a slow thinker so hosts can verify tick
+        // pacing stays fixed while agents lag.
+        let sleep_ms: u64 = std::env::var("SLEEP_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
         tokio::spawn(async move {
             // Lockstep echo: one reply per request, tick echoed back so the
             // host can match replies to ticks.
             while let Ok(Some(req)) = inbound.message().await {
+                if sleep_ms > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
+                }
                 let resp = PlayResponse {
                     tick: req.tick,
                     action: Some(random_action()),
